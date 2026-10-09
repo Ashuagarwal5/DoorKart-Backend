@@ -1,4 +1,4 @@
-// BuyNest database schema.
+// DoorKart database schema.
 // All money is integer paise (₹149.50 = 14950). Never add a float money column.
 
 generator client {
@@ -303,4 +303,60 @@ model AdminSession {
 
   @@index([adminUserId])
   @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------------------
+// Customer sign-in (Google and email codes). This is separate from `Customer`, the guest
+// record keyed by mobile number that orders use, so checkout is unchanged by it.
+// ---------------------------------------------------------------------------------------
+
+model Account {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  fullName        String?
+  // Google's stable user id ("sub"). Set when the person signs in with Google.
+  googleSubject   String?   @unique
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sessions AccountSession[]
+}
+
+// A signed-in phone. The app holds a random token; only its SHA-256 is stored here.
+model AccountSession {
+  id        String   @id @default(cuid())
+  accountId String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([expiresAt])
+}
+
+// A one-time sign-in code sent by email. Only a keyed hash of the code is stored.
+model EmailOtp {
+  id         String    @id @default(cuid())
+  email      String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email, createdAt])
+}
+
+// Shop-wide settings edited in the admin panel (email server, Google client ids, ...).
+// Secret values are stored encrypted and are never returned by any API.
+model Setting {
+  key               String   @id
+  value             String
+  isSecret          Boolean  @default(false)
+  updatedAt         DateTime @updatedAt
+  updatedByAdminId  String?
 }

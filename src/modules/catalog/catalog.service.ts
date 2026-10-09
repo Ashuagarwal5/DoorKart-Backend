@@ -32,6 +32,13 @@ function toPublicProduct(product: ProductWithRelations) {
   };
 }
 
+const ORDER_BY: Record<ListProductsQuery['sort'], Prisma.ProductOrderByWithRelationInput[]> = {
+  newest: [{ createdAt: 'desc' }, { id: 'asc' }],
+  price_asc: [{ sellingPricePaise: 'asc' }, { id: 'asc' }],
+  price_desc: [{ sellingPricePaise: 'desc' }, { id: 'asc' }],
+  name_asc: [{ name: 'asc' }, { id: 'asc' }],
+};
+
 const activeProductWhere = {
   isActive: true,
   category: { isActive: true },
@@ -56,6 +63,17 @@ export async function listProducts(query: ListProductsQuery) {
   const where: Prisma.ProductWhereInput = {
     ...activeProductWhere,
     ...(query.category ? { category: { isActive: true, slug: query.category } } : {}),
+    ...(query.ids ? { id: { in: query.ids } } : {}),
+    ...(query.minPrice === undefined && query.maxPrice === undefined
+      ? {}
+      : {
+          sellingPricePaise: {
+            ...(query.minPrice === undefined ? {} : { gte: query.minPrice }),
+            ...(query.maxPrice === undefined ? {} : { lte: query.maxPrice }),
+          },
+        }),
+    // Available = on hand minus reserved by open orders, compared column to column in the database.
+    ...(query.inStock ? { stockQuantity: { gt: prisma.product.fields.reservedQuantity } } : {}),
     ...(query.featured === undefined ? {} : { isFeatured: query.featured }),
     ...(query.new === undefined ? {} : { isNew: query.new }),
     ...(query.search
@@ -73,8 +91,8 @@ export async function listProducts(query: ListProductsQuery) {
     prisma.product.findMany({
       where,
       include: publicProductInclude,
-      // `id` breaks ties so pages never overlap or skip rows.
-      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+      // Every order ends with `id`, so ties never make pages overlap or skip rows.
+      orderBy: ORDER_BY[query.sort],
       skip: (query.page - 1) * query.limit,
       take: query.limit,
     }),

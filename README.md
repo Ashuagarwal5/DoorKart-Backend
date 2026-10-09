@@ -1,6 +1,6 @@
-# BuyNest Backend
+# DoorKart Backend
 
-REST API for BuyNest: Express 5, TypeScript, Prisma 7 and PostgreSQL. It is the source of
+REST API for DoorKart: Express 5, TypeScript, Prisma 7 and PostgreSQL. It is the source of
 truth for the catalogue, delivery areas, stock and orders, and will serve the customer app,
 the admin dashboard and any later clients.
 
@@ -70,6 +70,7 @@ up for development. It is safe to re-run and never resets stock.
 | `CORS_ORIGINS` | no       | Comma-separated browser origins (the admin panel's address). Empty allows all in development, none in production |
 | `ADMIN_SESSION_TTL_HOURS` | no | How long an admin stays signed in, default `12` |
 | `TRUST_PROXY_HOPS` | no | Reverse proxies in front of the API, default `0` |
+| `SECRETS_KEY` | for email sign-in and saved passwords | Master key (32 random bytes, base64). Create with `npm run secrets:key`. Keep a private copy: without the same key, saved secrets cannot be read |
 | `UPLOAD_DIR` | no | Where uploaded product pictures and videos are stored, default `uploads` (inside `Backend`) |
 | `ADMIN_SEED_EMAIL` / `ADMIN_SEED_PASSWORD` / `ADMIN_SEED_NAME` | for `admin:create` | The first admin account. No defaults; see Admin setup |
 
@@ -92,6 +93,7 @@ up for development. It is safe to re-run and never resets stock.
 | `npm run prisma:seed`     | Load development data                                    |
 | `npm run admin:create`    | Create the first admin from `ADMIN_SEED_*` (add `--reset-password` to replace a password) |
 | `npm run db:reset-dev -- --yes` | DEV ONLY: delete all orders and customers, release reserved stock |
+| `npm run seed:demo` | Adds 50 made-up demo products with placeholder pictures (skips any SKU that exists; edit them in the admin panel) |
 
 `db:reset-dev` keeps the catalogue and delivery areas. It refuses to run if `NODE_ENV` is
 `production` or the database is not on this machine, and does nothing without `--yes`.
@@ -236,6 +238,34 @@ days as `YYYY-MM-DD`, both inclusive. Money is integer paise everywhere. Nothing
 deleted through the API: products, categories and delivery areas are deactivated with
 `isActive: false`. Admin responses never contain tracking tokens.
 
+### Customer sign-in (email code and Google)
+
+Customers can sign in to the app with a one-time code sent by email, or with Google. This
+creates an `Account`, separate from the guest `Customer` record that orders use, so ordering
+without an account still works exactly as before.
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| GET | `/auth/config` | Which sign-in methods are on, and the Google web client ID (public) |
+| POST | `/auth/email-otp/request` | `{ email }`: emails a 6-digit code |
+| POST | `/auth/email-otp/verify` | `{ email, code }`: returns `{ token, account }` |
+| POST | `/auth/google` | `{ idToken }`: the server verifies Google's token, returns `{ token, account }` |
+| POST | `/auth/logout` | Ends this phone's session (`Authorization: Bearer <token>`) |
+| GET / PATCH / DELETE | `/account/me` | Profile, rename, delete the account |
+
+- **Codes:** 6 digits, valid for the minutes set in Settings (default 10), single use. Only a keyed
+  hash is stored. Five wrong guesses kill a code. One address gets a new code at most every 60 seconds
+  and five an hour. The answer is the same whether or not the address already has an account.
+- **Google:** the server checks the ID token's signature, expiry, audience (against the client IDs saved
+  in Settings) and that Google verified the email. A Google user whose email matches an existing account
+  joins it. No Google client secret is needed for this flow.
+- **Sessions:** a random token, kept on the phone in secure storage; only its SHA-256 is stored here.
+  They last 30 days. Deleting the account removes every session.
+- **Settings:** everything below is changed by a super admin in the admin panel (Settings), not in
+  files: the SMTP server, the Google client IDs, which methods are on, and the code lifetime. The SMTP
+  password is encrypted with `SECRETS_KEY` before it is stored and is never sent back to any screen.
+  `POST /admin/settings/email/test` sends a test message with the saved settings.
+
 ### Product pictures and videos
 
 The admin panel uploads a file to `POST /admin/uploads`, gets back a path such as
@@ -350,7 +380,7 @@ the full original request acts as the proof needed to get the order (and its tra
 back: knowing only the id is not enough. Orders created before fingerprints existed have none
 and can never be replayed.
 
-**Order numbers** (`BN-YYYYMMDD-NNNN`, date in IST) come from an `OrderCounter` row
+**Order numbers** (`DK-YYYYMMDD-NNNN`, date in IST) come from an `OrderCounter` row
 incremented with `INSERT ... ON CONFLICT DO UPDATE`, which is safe across concurrent
 requests and multiple server processes.
 

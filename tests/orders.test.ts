@@ -59,7 +59,7 @@ describe('POST /api/v1/orders', () => {
       customerPhone: '9876543210',
       deliveryAddress: { area: 'Station Road', city: 'Testpur', addressLine2: null },
     });
-    expect(order.orderNumber).toMatch(/^BN-\d{8}-1001$/);
+    expect(order.orderNumber).toMatch(/^DK-\d{8}-1001$/);
     expect(order.trackingToken).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(order.statusHistory.map((entry: { status: string }) => entry.status)).toEqual(['PLACED']);
     expect(order.items).toHaveLength(2);

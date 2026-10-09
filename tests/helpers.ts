@@ -15,7 +15,8 @@ export const app = createApp({ loginRateLimit: { limit: 10_000, windowMs: 60_000
 export async function resetDatabase(): Promise<void> {
   await prisma.$executeRaw`
     TRUNCATE "InventoryTransaction", "OrderStatusHistory", "PaymentStatusHistory", "OrderItem", "Order", "OrderCounter",
-             "Customer", "ProductImage", "Product", "Category", "DeliveryArea", "AdminSession", "AdminUser"
+             "Customer", "ProductImage", "Product", "Category", "DeliveryArea", "AdminSession", "AdminUser",
+             "AccountSession", "Account", "EmailOtp", "Setting"
     CASCADE
   `;
 }

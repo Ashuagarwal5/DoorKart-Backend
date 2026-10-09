@@ -3,7 +3,7 @@ import { env } from './config/env.js';
 import { prisma } from './lib/prisma.js';
 
 const server = createApp().listen(env.port, () => {
-  console.log(`BuyNest API listening on http://localhost:${env.port} (${env.nodeEnv})`);
+  console.log(`DoorKart API listening on http://localhost:${env.port} (${env.nodeEnv})`);
 });
 
 server.on('error', (error) => {

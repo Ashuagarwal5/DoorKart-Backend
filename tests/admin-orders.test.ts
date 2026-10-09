@@ -467,7 +467,7 @@ describe('admin order list and detail', () => {
 
     expect(await find(order.orderNumber)).toBe(1);
     expect(await find(order.orderNumber.slice(-4))).toBe(1); // a partial number matches too
-    expect(await find('BN-')).toBe(2);
+    expect(await find('DK-')).toBe(2);
     expect(await find('ravi')).toBe(2);
     expect(await find('9876500001')).toBe(1);
     expect(await find('+91 98765 00001')).toBe(1);

@@ -17,7 +17,7 @@ export function getOrderDay(now: Date): string {
 }
 
 /**
- * Issues the next order number for today, e.g. BN-20261003-1001.
+ * Issues the next order number for today, e.g. DK-20261003-1001.
  *
  * The sequence lives in the database, not in memory: a single INSERT ... ON CONFLICT
  * statement locks today's counter row and increments it, so two concurrent orders can
@@ -37,7 +37,7 @@ export async function issueOrderNumber(tx: TransactionClient, now: Date): Promis
   if (sequence === undefined) {
     throw new Error('Could not issue an order number');
   }
-  return `BN-${day}-${sequence}`;
+  return `DK-${day}-${sequence}`;
 }
 
 /** 192 bits of randomness, URL-safe. Unguessable, unlike the sequential order number. */

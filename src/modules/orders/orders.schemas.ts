@@ -72,7 +72,7 @@ export const orderNumberParamsSchema = z.object({
   orderNumber: z
     .string()
     .trim()
-    .regex(/^BN-\d{8}-\d{4,}$/, 'Not a valid order number'),
+    .regex(/^(DK|BN)-\d{8}-\d{4,}$/, 'Not a valid order number'),
 });
 
 /** The tracking token travels in a header so it never ends up in URLs or access logs. */

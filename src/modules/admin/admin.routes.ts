@@ -8,6 +8,7 @@ import { adminDeliveryAreasRouter } from './delivery-areas/admin-delivery-areas.
 import { createAdminAuthRouter, type LoginRateLimit } from './auth/admin-auth.routes.js';
 import { adminOrdersRouter } from './orders/admin-orders.routes.js';
 import { adminProductsRouter } from './products/admin-products.routes.js';
+import { adminSettingsRouter } from './settings/admin-settings.routes.js';
 import { adminUploadsRouter } from './uploads/admin-uploads.routes.js';
 
 /**
@@ -31,6 +32,7 @@ export function createAdminRouter(loginRateLimit: LoginRateLimit) {
   router.use('/delivery-areas', adminDeliveryAreasRouter);
   router.use('/customers', adminCustomersRouter);
   router.use('/uploads', adminUploadsRouter);
+  router.use('/settings', adminSettingsRouter);
 
   return router;
 }

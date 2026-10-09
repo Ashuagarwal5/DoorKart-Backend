@@ -7,6 +7,7 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { requestLogger } from './middleware/request-logger.js';
 import { DEFAULT_LOGIN_RATE_LIMIT, type LoginRateLimit } from './modules/admin/auth/admin-auth.routes.js';
 import { createAdminRouter } from './modules/admin/admin.routes.js';
+import { accountRouter, authRouter } from './modules/accounts/accounts.routes.js';
 import { catalogRouter } from './modules/catalog/catalog.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { ordersRouter } from './modules/orders/orders.routes.js';
@@ -35,7 +36,7 @@ export function createApp(options: AppOptions = {}): Express {
       // The admin panel signs in with a cookie, which browsers only send cross-origin when
       // the server opts in. The origin above is a list or a reflected value, never "*".
       credentials: true,
-      allowedHeaders: ['Content-Type', TRACKING_TOKEN_HEADER],
+      allowedHeaders: ['Content-Type', 'Authorization', TRACKING_TOKEN_HEADER],
       exposedHeaders: ['Idempotent-Replayed'],
     })
   );
@@ -59,6 +60,8 @@ export function createApp(options: AppOptions = {}): Express {
   app.use(healthRouter);
   app.use(API_PREFIX, catalogRouter);
   app.use(API_PREFIX, ordersRouter);
+  app.use(`${API_PREFIX}/auth`, authRouter);
+  app.use(`${API_PREFIX}/account`, accountRouter);
   app.use(`${API_PREFIX}/admin`, createAdminRouter(options.loginRateLimit ?? DEFAULT_LOGIN_RATE_LIMIT));
 
   app.use(notFoundHandler);

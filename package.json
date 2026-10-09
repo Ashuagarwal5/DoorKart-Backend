@@ -1,8 +1,8 @@
 {
-  "name": "buynest-backend",
+  "name": "doorkart-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "BuyNest REST API (Express, Prisma, PostgreSQL)",
+  "description": "DoorKart REST API (Express, Prisma, PostgreSQL)",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -16,6 +16,8 @@
     "test": "vitest run",
     "db:dev": "tsx scripts/dev-db.ts",
     "db:reset-dev": "tsx scripts/reset-dev-data.ts",
+    "seed:demo": "tsx scripts/seed-demo-catalog.ts",
+    "secrets:key": "tsx scripts/make-secrets-key.ts",
     "db:studio": "prisma studio --config prisma7.config.ts",
     "admin:create": "tsx scripts/create-admin.ts",
     "prisma:generate": "prisma generate",
@@ -31,8 +33,10 @@
     "dotenv": "^18.0.5",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
+    "google-auth-library": "^11.1.0",
     "helmet": "^8.3.0",
     "multer": "^2.4.0",
+    "nodemailer": "^10.0.15",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -40,10 +44,12 @@
     "@types/express": "^5.0.6",
     "@types/multer": "^2.3.0",
     "@types/node": "^24.19.1",
+    "@types/nodemailer": "^8.0.2",
     "@types/supertest": "^7.2.1",
     "embedded-postgres": "^18.4.0-beta.17",
     "eslint": "^10.12.0",
     "prisma": "7.10.0",
+    "sharp": "^0.35.5",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",

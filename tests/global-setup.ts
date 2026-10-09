@@ -61,6 +61,8 @@ export default async function setup() {
   // Uploaded files go to a throwaway folder, never the real uploads directory.
   const uploadDir = mkdtempSync(path.join(os.tmpdir(), 'buynest-test-uploads-'));
   process.env['UPLOAD_DIR'] = uploadDir;
+  // A fixed key for tests only: secrets saved during a run are unreadable afterwards anyway.
+  process.env['SECRETS_KEY'] = Buffer.alloc(32, 7).toString('base64');
 
   execSync('npx prisma migrate deploy', {
     cwd: path.resolve(import.meta.dirname, '..'),

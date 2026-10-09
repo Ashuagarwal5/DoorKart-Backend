@@ -18,7 +18,27 @@ const envSchema = z.object({
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
   /** Where uploaded product pictures and videos are stored. Relative paths start at the Backend folder. */
   UPLOAD_DIR: z.string().trim().min(1).default('uploads'),
+  /**
+   * The master key for secrets kept in the database (the email password) and for sign-in code
+   * hashes: 32 random bytes, base64. Create one with `npm run secrets:key`. Losing or changing it
+   * makes saved secrets unreadable, so the admin would have to enter them again.
+   */
+  SECRETS_KEY: z.string().trim().default(''),
 });
+
+function parseSecretsKey(value: string): Buffer | null {
+  if (value === '') {
+    return null;
+  }
+  const key = Buffer.from(value, 'base64');
+  if (key.length !== 32) {
+    console.error(
+      'Invalid environment configuration:\n  SECRETS_KEY: must be 32 random bytes, base64 (run `npm run secrets:key`)'
+    );
+    process.exit(1);
+  }
+  return key;
+}
 
 const parsed = envSchema.safeParse(process.env);
 
@@ -28,6 +48,8 @@ if (!parsed.success) {
   console.error(`Invalid environment configuration:\n${problems.join('\n')}`);
   process.exit(1);
 }
+
+const secretsKey = parseSecretsKey(parsed.data.SECRETS_KEY);
 
 export const env = {
   nodeEnv: parsed.data.NODE_ENV,
@@ -41,4 +63,5 @@ export const env = {
   adminSessionTtlMs: parsed.data.ADMIN_SESSION_TTL_HOURS * 60 * 60 * 1000,
   trustProxyHops: parsed.data.TRUST_PROXY_HOPS,
   uploadDir: path.resolve(parsed.data.UPLOAD_DIR),
+  secretsKey: secretsKey,
 };
