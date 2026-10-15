@@ -24,7 +24,13 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "docker:up": "docker compose --env-file .env.docker up --build -d",
+    "docker:down": "docker compose --env-file .env.docker down",
+    "docker:logs": "docker compose --env-file .env.docker logs -f backend",
+    "docker:ps": "docker compose --env-file .env.docker ps",
+    "docker:migrate": "docker compose --env-file .env.docker exec backend npm run prisma:deploy -- --config prisma7.config.ts",
+    "docker:admin-create": "docker compose --env-file .env.docker exec -e ADMIN_SEED_EMAIL -e ADMIN_SEED_NAME -e ADMIN_SEED_PASSWORD backend npm run admin:create"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

@@ -1,0 +1,60 @@
+# Backend-only stack: PostgreSQL + the API. Use this when the Backend repository is
+# deployed on its own. (The repository-root compose.yaml also starts the admin panel.)
+#
+#   cp .env.docker.example .env.docker      # then edit it
+#   npm run docker:up
+name: doorkart-backend
+
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-buynest}
+      POSTGRES_USER: ${POSTGRES_USER:-buynest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-buynest-local}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Uncomment to reach the database from your own machine (for example a SQL client).
+    # ports:
+    #   - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-buynest} -d ${POSTGRES_DB:-buynest}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-buynest}:${POSTGRES_PASSWORD:-buynest-local}@db:5432/${POSTGRES_DB:-buynest}
+      # Local HTTP admin login needs non-secure cookies; use production behind HTTPS.
+      NODE_ENV: ${BACKEND_NODE_ENV:-development}
+      PORT: 4000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      UPLOAD_DIR: /app/uploads
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
+      ADMIN_SESSION_TTL_HOURS: ${ADMIN_SESSION_TTL_HOURS:-12}
+      # Sign-in codes and secrets saved in the admin panel (email password, Firebase key).
+      SECRETS_KEY: ${SECRETS_KEY:-}
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    # Applies pending migrations, then starts the API.
+    command: ["sh", "-c", "npm run prisma:deploy -- --config prisma7.config.ts && exec node dist/server.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
+volumes:
+  postgres_data:
+  uploads:

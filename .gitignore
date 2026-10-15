@@ -5,6 +5,7 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.docker.example
 
 # Generated Prisma client (recreated by `npm run prisma:generate`)
 /src/generated/
