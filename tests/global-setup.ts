@@ -45,6 +45,8 @@ export default async function setup() {
     port,
     // Teardown below stops the server and removes the folder itself.
     persistent: true,
+    // The real database is UTF-8; without this a Windows machine defaults to a legacy code page.
+    initdbFlags: ['--encoding=UTF8'],
     onLog: () => {},
     onError: () => {},
   });

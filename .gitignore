@@ -11,6 +11,7 @@ dist/
 
 # Local development database files
 /.pgdata/
+/.backups/
 
 *.log
 

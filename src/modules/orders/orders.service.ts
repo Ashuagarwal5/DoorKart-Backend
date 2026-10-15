@@ -1,14 +1,17 @@
+import { resolveOrderOffers, physicalLines } from '../catalog/product-offers.js';
 import type { Prisma } from '../../generated/prisma/client.js';
-import { AppError, conflict, notFound, unprocessable } from '../../lib/errors.js';
-import { calculateLineTotal, calculateOrderTotals } from '../../lib/pricing.js';
+import { AppError, conflict, notFound, unauthenticated, unprocessable } from '../../lib/errors.js';
+import { calculateOrderTotals } from '../../lib/pricing.js';
+import { pageArgs, pageResult, type PageParams } from '../../lib/pagination.js';
 import { prisma, type TransactionClient } from '../../lib/prisma.js';
+import { emitOrderStatusEvent } from '../notifications/emitters.js';
 import { createRequestFingerprint } from './fingerprint.js';
 import { addStatusHistory, claimStatusChange, releaseReservations } from './order-lifecycle.js';
 import { generateTrackingToken, issueOrderNumber, isSameToken } from './order-number.js';
 import type { CreateOrderInput } from './orders.schemas.js';
 
 const orderInclude = {
-  items: { orderBy: { productName: 'asc' } },
+  items: { include: { components: true }, orderBy: { productName: 'asc' } },
   statusHistory: { orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.OrderInclude;
 
@@ -33,6 +36,10 @@ function toPublicOrder(order: OrderWithRelations) {
     },
     deliveryAreaId: order.deliveryAreaId,
     items: order.items.map((item) => ({
+      id: item.id,
+      variantId: item.variantId,
+      packLabel: item.packLabel,
+      components: item.components,
       productId: item.productId,
       productName: item.productName,
       sku: item.sku,
@@ -125,7 +132,8 @@ async function placeOrder(
   tx: TransactionClient,
   input: CreateOrderInput,
   requestFingerprint: string,
-  now: Date
+  now: Date,
+  accountId: string
 ): Promise<OrderWithRelations> {
   const area = await tx.deliveryArea.findUnique({ where: { id: input.deliveryAreaId } });
   if (!area) {
@@ -134,48 +142,21 @@ async function placeOrder(
   if (!area.isActive) {
     throw conflict('DELIVERY_AREA_UNAVAILABLE', `We no longer deliver to ${area.name}.`);
   }
-
-  // Always lock products in the same order, so two orders sharing products cannot deadlock.
-  const requestedItems = [...input.items].sort((a, b) => a.productId.localeCompare(b.productId));
-
-  for (const item of requestedItems) {
-    if (!(await tryReserveStock(tx, item.productId, item.quantity))) {
-      throw await reservationFailure(tx, item.productId, item.quantity);
-    }
+  // A missing configured pincode cannot establish serviceability. Validate before
+  // reserving stock; successful idempotent replays still return the original order.
+  if (area.pincode === null || area.pincode !== input.address.pincode) {
+    throw unprocessable(
+      'DELIVERY_PINCODE_UNSUPPORTED',
+      'Delivery is unavailable for this pincode in the selected area. Check your address or choose another delivery area.'
+    );
   }
 
-  // Read after reserving: this transaction now holds each row's lock, so the name, SKU
-  // and price captured here cannot change before the order is committed.
-  const products = await tx.product.findMany({
-    where: { id: { in: requestedItems.map((item) => item.productId) } },
-    include: {
-      category: { select: { isActive: true } },
-      images: { where: { mediaType: 'IMAGE' }, orderBy: { displayOrder: 'asc' }, take: 1, select: { url: true } },
-    },
-  });
-  const productsById = new Map(products.map((product) => [product.id, product]));
-
-  const orderItems = requestedItems.map((item) => {
-    const product = productsById.get(item.productId);
-    if (!product) {
-      throw notFound('PRODUCT_NOT_FOUND', 'A product in your cart does not exist.');
-    }
-    if (!product.category.isActive) {
-      throw conflict('PRODUCT_UNAVAILABLE', `${product.name} is no longer available.`, {
-        productId: product.id,
-      });
-    }
-    return {
-      productId: product.id,
-      productName: product.name,
-      sku: product.sku,
-      productImage: product.images[0]?.url ?? null,
-      // The price is the database's, never anything the client sent.
-      unitPricePaise: product.sellingPricePaise,
-      quantity: item.quantity,
-      lineTotalPaise: calculateLineTotal(product.sellingPricePaise, item.quantity),
-    };
-  });
+  const offers = await resolveOrderOffers(tx, input.items);
+  const stockLines = physicalLines(offers);
+  for (const item of stockLines) {
+    if (!(await tryReserveStock(tx, item.productId, item.quantity))) throw await reservationFailure(tx, item.productId, item.quantity);
+  }
+  const orderItems = offers.map(({ components, ...item }) => ({ ...item, components: { create: components } }));
 
   const totals = calculateOrderTotals(orderItems, area);
 
@@ -191,8 +172,7 @@ async function placeOrder(
     );
   }
 
-  // Guest checkout: the mobile number identifies the customer, so a returning customer
-  // is reused (and their name refreshed) instead of duplicated.
+  // Preserve the shop's contact/customer records independently of account ownership.
   const customer = await tx.customer.upsert({
     where: { mobile: input.customer.mobile },
     update: { fullName: input.customer.fullName },
@@ -206,6 +186,7 @@ async function placeOrder(
       requestFingerprint,
       trackingToken: generateTrackingToken(),
       customerId: customer.id,
+      accountId,
       customerName: input.customer.fullName,
       customerPhone: input.customer.mobile,
       addressLine1: input.address.addressLine1,
@@ -227,13 +208,17 @@ async function placeOrder(
   });
 
   await tx.inventoryTransaction.createMany({
-    data: orderItems.map((item) => ({
+    data: stockLines.map((item) => ({
       productId: item.productId,
       orderId: order.id,
       type: 'RESERVE' as const,
       quantity: item.quantity,
     })),
   });
+
+  // Queued in this transaction: it commits with the order or not at all, and is never sent from here.
+  const placedHistory = order.statusHistory[0];
+  if (placedHistory) await emitOrderStatusEvent(tx, order.id, 'PLACED', placedHistory.id);
 
   return order;
 }
@@ -250,8 +235,8 @@ function findOrderByClientRequestId(clientRequestId: string) {
  * A missing fingerprint (an order created before fingerprints existed) can never be
  * confirmed, so it never matches.
  */
-function replayOf(existing: OrderWithRelations, fingerprint: string): PlacedOrder {
-  if (existing.requestFingerprint !== fingerprint) {
+function replayOf(existing: OrderWithRelations, fingerprint: string, accountId: string | null): PlacedOrder {
+  if (existing.requestFingerprint !== fingerprint || existing.accountId !== accountId) {
     throw conflict(
       'IDEMPOTENCY_CONFLICT',
       'This request id was already used for a different order. Start a new order to continue.'
@@ -267,17 +252,19 @@ function replayOf(existing: OrderWithRelations, fingerprint: string): PlacedOrde
  * as the original; a different one is rejected with IDEMPOTENCY_CONFLICT.
  */
 export async function createOrder(
-  input: CreateOrderInput
+  input: CreateOrderInput,
+  accountId: string
 ): Promise<{ order: PlacedOrder; created: boolean }> {
+  if (!accountId) throw unauthenticated();
   const fingerprint = createRequestFingerprint(input);
 
   const existing = await findOrderByClientRequestId(input.clientRequestId);
   if (existing) {
-    return { order: replayOf(existing, fingerprint), created: false };
+    return { order: replayOf(existing, fingerprint, accountId), created: false };
   }
 
   try {
-    const order = await prisma.$transaction((tx) => placeOrder(tx, input, fingerprint, new Date()));
+    const order = await prisma.$transaction((tx) => placeOrder(tx, input, fingerprint, new Date(), accountId));
     return { order: toPlacedOrder(order), created: true };
   } catch (error) {
     // Two copies of the same request can run at once. The loser fails, either on the
@@ -285,7 +272,7 @@ export async function createOrder(
     // the same purchase it answers with the winner's order; if not, it is a conflict.
     const winner = await findOrderByClientRequestId(input.clientRequestId);
     if (winner) {
-      return { order: replayOf(winner, fingerprint), created: false };
+      return { order: replayOf(winner, fingerprint, accountId), created: false };
     }
     throw error;
   }
@@ -316,6 +303,11 @@ export async function getOrder(orderNumber: string, trackingToken: string): Prom
  */
 export async function cancelOrder(orderNumber: string, trackingToken: string): Promise<PublicOrder> {
   const order = await findAuthorizedOrder(orderNumber, trackingToken);
+  return cancelAuthorizedOrder(order);
+}
+
+/** Both authorization paths use the same transactional cancellation and stock guards. */
+async function cancelAuthorizedOrder(order: OrderWithRelations): Promise<PublicOrder> {
 
   const cancelled = await prisma.$transaction(async (tx) => {
     // The status check is part of the UPDATE itself, so two simultaneous cancellations
@@ -332,9 +324,33 @@ export async function cancelOrder(orderNumber: string, trackingToken: string): P
     });
 
     await releaseReservations(tx, order.id, order.items);
-    await addStatusHistory(tx, order.id, 'CANCELLED', 'Cancelled by customer');
+    const history = await addStatusHistory(tx, order.id, 'CANCELLED', 'Cancelled by customer');
+    await emitOrderStatusEvent(tx, order.id, 'CANCELLED', history.id);
 
     return tx.order.findUniqueOrThrow({ where: { id: order.id }, include: orderInclude });
   });
   return toPublicOrder(cancelled);
+}
+
+export async function listAccountOrders(accountId: string, page: PageParams) {
+  const where = { accountId };
+  const [total, orders] = await Promise.all([
+    prisma.order.count({ where }),
+    prisma.order.findMany({ where, include: orderInclude, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], ...pageArgs(page) }),
+  ]);
+  return pageResult(orders.map(toPublicOrder), total, page);
+}
+
+async function findAccountOrder(accountId: string, orderNumber: string) {
+  const order = await prisma.order.findFirst({ where: { accountId, orderNumber }, include: orderInclude });
+  if (!order) throw notFound('ORDER_NOT_FOUND', 'This order could not be found.');
+  return order;
+}
+
+export async function getAccountOrder(accountId: string, orderNumber: string): Promise<PublicOrder> {
+  return toPublicOrder(await findAccountOrder(accountId, orderNumber));
+}
+
+export async function cancelAccountOrder(accountId: string, orderNumber: string): Promise<PublicOrder> {
+  return cancelAuthorizedOrder(await findAccountOrder(accountId, orderNumber));
 }

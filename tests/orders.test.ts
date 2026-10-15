@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   app,
+  createTestBuyer,
   type Fixtures,
   getStock,
   orderPayload,
@@ -14,13 +15,15 @@ import {
 const TOKEN_HEADER = 'x-tracking-token';
 
 let fixtures: Fixtures;
+let buyerToken: string;
 
 beforeEach(async () => {
   await resetDatabase();
   fixtures = await seedFixtures();
+  buyerToken = (await createTestBuyer()).token;
 });
 
-const placeOrder = (body: unknown) => request(app).post('/api/v1/orders').send(body as object);
+const placeOrder = (body: unknown) => request(app).post('/api/v1/orders').auth(buyerToken, { type: 'bearer' }).send(body as object);
 
 /** One notebook (₹349) delivered to Station Road (₹30). */
 const simpleOrder = (overrides: { clientRequestId?: string; mobile?: string } = {}) =>

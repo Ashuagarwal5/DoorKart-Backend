@@ -67,7 +67,7 @@ export async function getDashboard(now: Date) {
     prisma.$queryRaw<LowStockRow[]>`
       SELECT "id", "name", "sku", "stockQuantity", "reservedQuantity", "lowStockThreshold"
       FROM "Product"
-      WHERE "isActive" = true AND ("stockQuantity" - "reservedQuantity") <= "lowStockThreshold"
+      WHERE "isActive" = true AND "kind" = 'STANDARD' AND ("stockQuantity" - "reservedQuantity") <= "lowStockThreshold"
       ORDER BY ("stockQuantity" - "reservedQuantity") ASC, "name" ASC
     `,
     listRecentOrders(RECENT_ORDER_COUNT),

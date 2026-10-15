@@ -60,6 +60,11 @@ model Category {
   @@index([isActive, displayOrder])
 }
 
+enum ProductKind {
+  STANDARD
+  COMBO
+}
+
 model Product {
   id                String   @id @default(cuid())
   name              String
@@ -69,6 +74,12 @@ model Product {
   sku               String   @unique
   mrpPaise          Int
   sellingPricePaise Int
+  kind ProductKind @default(STANDARD)
+  variants PackVariant[]
+  comboComponents ComboComponent[] @relation("Combo")
+  usedInCombos ComboComponent[] @relation("ComponentProduct")
+  orderComponents OrderItemComponent[]
+  returnComponents ReturnCaseItemComponent[]
   // Physical units on hand. Only reduced when an order is delivered (SALE).
   stockQuantity     Int      @default(0)
   // Units held by placed-but-undelivered orders. Available = stockQuantity - reservedQuantity.
@@ -85,6 +96,8 @@ model Product {
   images                ProductImage[]
   orderItems            OrderItem[]
   inventoryTransactions InventoryTransaction[]
+
+  reviews Review[]
 
   @@index([categoryId])
   @@index([isActive, isFeatured])
@@ -135,6 +148,7 @@ model DeliveryArea {
   updatedAt                  DateTime @updatedAt
 
   orders Order[]
+  accountAddresses AccountAddress[]
 }
 
 model Order {
@@ -149,6 +163,8 @@ model Order {
   // Opaque secret returned once to the customer; required to read or cancel the order.
   trackingToken      String
   customerId         String
+  // Only new purchases made with a verified account session are linked. No guest backfill.
+  accountId          String?
 
   // Snapshots taken at order time. Never re-read these from Customer / DeliveryArea.
   customerName  String
@@ -180,13 +196,16 @@ model Order {
   paymentCollectedAt DateTime?
 
   customer              Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  account               Account?               @relation(fields: [accountId], references: [id], onDelete: SetNull)
   deliveryArea          DeliveryArea           @relation(fields: [deliveryAreaId], references: [id], onDelete: Restrict)
   items                 OrderItem[]
   statusHistory         OrderStatusHistory[]
   paymentHistory        PaymentStatusHistory[]
+  returnCases           ReturnCase[]
   inventoryTransactions InventoryTransaction[]
 
   @@index([customerId])
+  @@index([accountId, createdAt, id])
   @@index([orderStatus, createdAt])
   @@index([createdAt])
   @@index([deliveredAt])
@@ -199,6 +218,10 @@ model OrderItem {
   orderId   String
   productId String
 
+  variantId String?
+  packLabel String?
+  variant PackVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  components OrderItemComponent[]
   productName  String
   sku          String
   productImage String?
@@ -210,7 +233,80 @@ model OrderItem {
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
-  @@unique([orderId, productId])
+  reviews Review[]
+  @@index([orderId, productId])
+  returnItems ReturnCaseItem[]
+}
+
+enum ReturnCaseKind {
+  RETURN_ONLY
+  REFUND_ONLY
+  RETURN_REFUND
+}
+
+enum ReturnCaseStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+model ReturnCase {
+  id                   String @id @default(cuid())
+  orderId              String
+  clientRequestId      String @unique
+  requestFingerprint   String
+  kind                 ReturnCaseKind
+  status               ReturnCaseStatus @default(REQUESTED)
+  reason               String
+  requestedAmountPaise Int
+  approvedAmountPaise  Int?
+  payoutReference      String? @unique
+  createdAt            DateTime @default(now())
+  approvedAt           DateTime?
+  rejectedAt           DateTime?
+  receivedAt           DateTime?
+  completedAt          DateTime?
+  updatedAt            DateTime @updatedAt
+  order                Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  items                ReturnCaseItem[]
+  events               ReturnCaseEvent[]
+  @@index([orderId, createdAt, id])
+  @@index([status, createdAt, id])
+  @@index([completedAt])
+}
+
+model ReturnCaseItem {
+  id               String @id @default(cuid())
+  caseId           String
+  orderItemId      String
+  quantity         Int
+  componentInspection Boolean @default(false)
+  receivedQuantity Int @default(0)
+  sellableQuantity Int @default(0)
+  conditionNote    String?
+  restockedAt      DateTime?
+  case             ReturnCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  components ReturnCaseItemComponent[]
+  orderItem        OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  @@unique([caseId, orderItemId])
+  @@index([orderItemId])
+}
+
+model ReturnCaseEvent {
+  id                 String @id @default(cuid())
+  caseId             String
+  requestId          String
+  requestFingerprint String
+  action             String
+  adminId            String
+  adminName          String
+  note               String
+  details            Json
+  createdAt          DateTime @default(now())
+  case               ReturnCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  @@unique([caseId, requestId])
+  @@index([caseId, createdAt, id])
 }
 
 model OrderStatusHistory {
@@ -314,6 +410,10 @@ model Account {
   id              String    @id @default(cuid())
   email           String    @unique
   fullName        String?
+  mobile          String?
+  mobileVerifiedAt DateTime?
+  isActive        Boolean   @default(true)
+  termsAcceptedAt DateTime?
   // Google's stable user id ("sub"). Set when the person signs in with Google.
   googleSubject   String?   @unique
   emailVerifiedAt DateTime?
@@ -322,6 +422,34 @@ model Account {
   updatedAt       DateTime  @updatedAt
 
   sessions AccountSession[]
+  orders   Order[]
+  addresses AccountAddress[]
+  reviews Review[]
+  deviceRegistrations DeviceRegistration[]
+  notifications       Notification[]
+}
+
+model AccountAddress {
+  id             String   @id @default(cuid())
+  accountId      String
+  label          String
+  isDefault      Boolean  @default(false)
+  fullName       String
+  phone          String
+  addressLine1   String
+  addressLine2   String?
+  landmark       String?
+  city           String
+  pincode        String
+  deliveryAreaId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  deliveryArea DeliveryArea? @relation(fields: [deliveryAreaId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, createdAt, id])
+  @@index([deliveryAreaId])
 }
 
 // A signed-in phone. The app holds a random token; only its SHA-256 is stored here.
@@ -339,9 +467,16 @@ model AccountSession {
 }
 
 // A one-time sign-in code sent by email. Only a keyed hash of the code is stored.
+enum EmailOtpPurpose {
+  LOGIN
+  REGISTRATION
+}
+
 model EmailOtp {
   id         String    @id @default(cuid())
   email      String
+  purpose    EmailOtpPurpose @default(LOGIN)
+  registrationData Json?
   codeHash   String
   attempts   Int       @default(0)
   expiresAt  DateTime
@@ -359,4 +494,277 @@ model Setting {
   isSecret          Boolean  @default(false)
   updatedAt         DateTime @updatedAt
   updatedByAdminId  String?
+}
+
+enum ReviewStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+  HIDDEN
+}
+
+enum ReviewOrigin {
+  CUSTOMER
+  ADMIN_ENTERED
+  IMPORTED
+}
+
+model Review {
+  id                  String @id @default(cuid())
+  productId           String
+  accountId           String?
+  purchaseItemId      String?
+  rating              Int
+  title               String
+  content             String
+  reviewerName        String
+  origin              ReviewOrigin @default(CUSTOMER)
+  sourceLabel         String?
+  status              ReviewStatus @default(PENDING)
+  createdByAdminId    String?
+  moderatedByAdminId  String?
+  moderationNote      String?
+  moderatedAt         DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  product             Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  account             Account? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  purchaseItem        OrderItem? @relation(fields: [purchaseItemId], references: [id], onDelete: SetNull)
+
+  @@unique([productId, accountId])
+  @@index([productId, status, deletedAt, createdAt, id])
+  @@index([accountId, createdAt, id])
+  @@index([status, createdAt, id])
+  @@index([purchaseItemId])
+}
+
+model PackVariant {
+  id String @id @default(cuid())
+  productId String
+  label String
+  sku String @unique
+  unitsPerPack Int
+  mrpPaise Int
+  sellingPricePaise Int
+  isActive Boolean @default(true)
+  displayOrder Int @default(0)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  orderItems OrderItem[]
+  @@unique([productId, unitsPerPack])
+}
+model ComboComponent {
+  id String @id @default(cuid())
+  comboId String
+  productId String
+  quantity Int
+  combo Product @relation("Combo", fields: [comboId], references: [id], onDelete: Restrict)
+  product Product @relation("ComponentProduct", fields: [productId], references: [id], onDelete: Restrict)
+  @@unique([comboId, productId])
+  @@index([productId])
+}
+model OrderItemComponent {
+  id String @id @default(cuid())
+  orderItemId String
+  productId String
+  productName String
+  sku String
+  unitsPerPack Int
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  @@unique([orderItemId, productId])
+  @@index([productId])
+}
+model ReturnCaseItemComponent {
+  id String @id @default(cuid())
+  returnItemId String
+  productId String
+  productName String
+  quantity Int
+  sellableQuantity Int @default(0)
+  conditionNote String?
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  returnItem ReturnCaseItem @relation(fields: [returnItemId], references: [id], onDelete: Restrict)
+  @@unique([returnItemId, productId])
+}
+
+// ---------------------------------------------------------------------------------------
+// Push notifications. Event definitions, variables and target screens live in code
+// (src/modules/notifications); these tables hold configuration, the outbox and history.
+// ---------------------------------------------------------------------------------------
+
+enum NotificationEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+}
+
+enum NotificationDeliveryStatus {
+  SENT
+  FAILED
+}
+
+/// Single row (id = 'fcm'). The service account JSON is stored encrypted and never returned.
+model NotificationProviderConfig {
+  id                  String    @id
+  isEnabled           Boolean   @default(false)
+  projectId           String?
+  clientEmail         String?
+  privateKeyId        String?
+  credentialEncrypted String?
+  lastTestAt          DateTime?
+  lastTestOk          Boolean?
+  lastTestMessage     String?
+  lastSuccessAt       DateTime?
+  lastFailureAt       DateTime?
+  lastFailureMessage  String?
+  updatedAt           DateTime  @updatedAt
+  updatedByAdminId    String?
+}
+
+model NotificationTemplate {
+  id               String   @id @default(cuid())
+  key              String   @unique
+  name             String
+  eventKey         String
+  title            String
+  body             String
+  imageUrl         String?
+  targetScreen     String?
+  metadata         Json?
+  isEnabled        Boolean  @default(false)
+  createdByAdminId String?
+  updatedByAdminId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  notifications Notification[]
+
+  @@index([eventKey, isEnabled])
+}
+
+model NotificationEventSetting {
+  eventKey         String   @id
+  isEnabled        Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+  updatedByAdminId String?
+}
+
+model DeviceRegistration {
+  id               String         @id @default(cuid())
+  accountId        String
+  installationId   String         @unique
+  token            String         @unique
+  platform         DevicePlatform
+  appVersion       String?
+  lastRegisteredAt DateTime       @default(now())
+  invalidatedAt    DateTime?
+  invalidReason    String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  account    Account                @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  deliveries NotificationDelivery[]
+
+  @@index([accountId, invalidatedAt])
+}
+
+/// The outbox: one row per business event, written in the same transaction as the change.
+model NotificationEvent {
+  id            String                  @id @default(cuid())
+  eventKey      String
+  dedupKey      String                  @unique
+  accountId     String?
+  entityType    String
+  entityId      String
+  payload       Json
+  status        NotificationEventStatus @default(PENDING)
+  attempts      Int                     @default(0)
+  nextAttemptAt DateTime                @default(now())
+  lockedUntil   DateTime?
+  lastError     String?
+  processedAt   DateTime?
+  createdAt     DateTime                @default(now())
+
+  notification Notification?
+
+  @@index([status, nextAttemptAt])
+  @@index([createdAt])
+}
+
+/// Customer inbox entry and delivery history in one row. Text is rendered once and kept, so
+/// history stays readable after a template changes or is deleted.
+model Notification {
+  id            String             @id @default(cuid())
+  eventId       String?            @unique
+  accountId     String
+  eventKey      String
+  templateId    String?
+  templateKey   String?
+  templateName  String?
+  title         String
+  body          String
+  pushTitle     String
+  pushBody      String
+  imageUrl      String?
+  targetScreen  String
+  targetParams  Json?
+  entityType    String?
+  entityId      String?
+  reference     String?
+  isTest        Boolean            @default(false)
+  status        NotificationStatus @default(PENDING)
+  errorCategory String?
+  attemptCount  Int                @default(0)
+  nextAttemptAt DateTime           @default(now())
+  lockedUntil   DateTime?
+  processedAt   DateTime?
+  sentAt        DateTime?
+  fcmMessageId  String?
+  readAt        DateTime?
+  createdAt     DateTime           @default(now())
+
+  event      NotificationEvent?     @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  account    Account                @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  template   NotificationTemplate?  @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  deliveries NotificationDelivery[]
+
+  @@index([accountId, createdAt, id])
+  @@index([accountId, readAt])
+  @@index([status, nextAttemptAt])
+  @@index([eventKey, createdAt])
+  @@index([createdAt])
+}
+
+model NotificationDelivery {
+  id             String                     @id @default(cuid())
+  notificationId String
+  deviceId       String?
+  tokenSuffix    String
+  attempt        Int
+  status         NotificationDeliveryStatus
+  fcmMessageId   String?
+  errorCategory  String?
+  errorMessage   String?
+  createdAt      DateTime                   @default(now())
+
+  notification Notification        @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  device       DeviceRegistration? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  @@index([notificationId])
+  @@index([createdAt])
 }

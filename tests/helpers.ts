@@ -6,6 +6,7 @@ import { expect } from 'vitest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/lib/prisma.js';
 import { hashPassword } from '../src/modules/admin/auth/password.js';
+import { createAccountSession } from '../src/modules/accounts/account-session.js';
 
 export { prisma };
 
@@ -16,7 +17,8 @@ export async function resetDatabase(): Promise<void> {
   await prisma.$executeRaw`
     TRUNCATE "InventoryTransaction", "OrderStatusHistory", "PaymentStatusHistory", "OrderItem", "Order", "OrderCounter",
              "Customer", "ProductImage", "Product", "Category", "DeliveryArea", "AdminSession", "AdminUser",
-             "AccountSession", "Account", "EmailOtp", "Setting"
+             "AccountSession", "Account", "EmailOtp", "Setting",
+             "NotificationEvent", "NotificationTemplate", "NotificationProviderConfig", "NotificationEventSetting"
     CASCADE
   `;
 }
@@ -75,11 +77,11 @@ export async function seedFixtures() {
   const areas = {
     // ₹30 delivery, free from ₹500
     standard: await prisma.deliveryArea.create({
-      data: { name: 'Station Road', deliveryChargePaise: 3000, freeDeliveryThresholdPaise: 50000 },
+      data: { name: 'Station Road', pincode: '226001', deliveryChargePaise: 3000, freeDeliveryThresholdPaise: 50000 },
     }),
     // ₹40 delivery, minimum order ₹200
     withMinimum: await prisma.deliveryArea.create({
-      data: { name: 'Model Town', deliveryChargePaise: 4000, minimumOrderPaise: 20000 },
+      data: { name: 'Model Town', pincode: '226001', deliveryChargePaise: 4000, minimumOrderPaise: 20000 },
     }),
     inactive: await prisma.deliveryArea.create({
       data: { name: 'Industrial Area', deliveryChargePaise: 5000, isActive: false },
@@ -152,14 +154,31 @@ export async function signIn(email: string = TEST_ADMIN_EMAIL) {
 
 export type AdminAgent = Awaited<ReturnType<typeof signIn>>;
 
+/** A verified buyer inside the disposable test database, without external email delivery. */
+export async function createTestBuyer() {
+  const account = await prisma.account.create({ data: { email: `${randomUUID()}@example.test`, emailVerifiedAt: new Date() } });
+  return { id: account.id, token: (await createAccountSession(account.id, new Date())).token };
+}
+
+/** Simulates a pre-policy guest record; production exposes no account-unlinking operation. */
+export async function historicalGuestOrder(body: object) {
+  const buyer = await createTestBuyer();
+  const response = await request(app).post('/api/v1/orders').auth(buyer.token, { type: 'bearer' }).send(body);
+  expect(response.status).toBe(201);
+  await prisma.order.update({ where: { orderNumber: response.body.data.orderNumber }, data: { accountId: null } });
+  return response;
+}
+
 /** Places an order through the public API, as the mobile app would. */
 export async function placeTestOrder(
   fixtures: Fixtures,
   items: { productId: string; quantity: number }[],
   options: { deliveryAreaId?: string; mobile?: string } = {}
 ) {
+  const buyer = await createTestBuyer();
   const response = await request(app)
     .post('/api/v1/orders')
+    .auth(buyer.token, { type: 'bearer' })
     .send(
       orderPayload({
         deliveryAreaId: options.deliveryAreaId ?? fixtures.areas.standard.id,

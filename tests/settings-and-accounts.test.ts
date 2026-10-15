@@ -71,6 +71,23 @@ describe('secret encryption', () => {
 });
 
 describe('admin settings', () => {
+  it('reports SMTP readiness without exposing credentials and validates authentication limits', async () => {
+    expect((await admin.get(SETTINGS)).body.data.smtpConfigured).toBe(false);
+    await configureEmail();
+    const settings = await admin.get(SETTINGS);
+    expect(settings.body.data.smtpConfigured).toBe(true);
+    expect(settings.body.data.groups.find((group: { id: string }) => group.id === 'signin').title).toBe('Authentication Settings');
+    for (const changes of [
+      { 'auth.otpResendCooldownSeconds': '29' },
+      { 'auth.otpResendCooldownSeconds': '601' },
+      { 'auth.otpMaxAttempts': '0' },
+      { 'auth.otpMaxAttempts': '11' },
+      { 'auth.registrationOtpEnabled': 'yes' },
+    ]) expect((await admin.patch(SETTINGS).send({ changes })).status).toBe(400);
+    await prisma.setting.update({ where: { key: 'smtp.password' }, data: { value: 'unreadable-secret' } });
+    expect((await admin.get(SETTINGS)).body.data.smtpConfigured).toBe(false);
+  });
+
   it('saves values, encrypts secrets in the database, and never returns them', async () => {
     await configureEmail();
 
@@ -361,17 +378,27 @@ describe('Google sign-in', () => {
     expect(await prisma.account.count()).toBe(0);
   });
 
-  it('joins an existing email-code account instead of creating a second one', async () => {
+  it('requires the existing email-code account session before linking Google', async () => {
     await enableGoogle();
-    const existing = await prisma.account.create({ data: { email: 'person@gmail.test' } });
+    await configureEmail();
+    await request(app).post('/api/v1/auth/email-otp/request').send({ email: 'person@gmail.test' });
+    const emailAccount = await request(app).post('/api/v1/auth/email-otp/verify').send({ email: 'person@gmail.test', code: lastCode() });
+    const existingId = emailAccount.body.data.account.id as string;
     setGoogleVerifier(async () => identity);
 
     const response = await request(app).post(GOOGLE).send({ idToken: token });
 
-    expect(response.status).toBe(200);
-    expect(response.body.data.account.id).toBe(existing.id);
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe('ACCOUNT_LINK_REQUIRED');
     expect(await prisma.account.count()).toBe(1);
-    expect((await prisma.account.findUniqueOrThrow({ where: { id: existing.id } })).googleSubject).toBe('google-sub-1');
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: existingId } })).googleSubject).toBeNull();
+    const linked = await request(app).post('/api/v1/account/google/link').auth(emailAccount.body.data.token, { type: 'bearer' }).send({ idToken: token });
+    expect(linked.status).toBe(200);
+    expect(linked.body.data.googleLinked).toBe(true);
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: existingId } })).googleSubject).toBe('google-sub-1');
+    const signedIn = await request(app).post(GOOGLE).send({ idToken: token });
+    expect(signedIn.status).toBe(200);
+    expect(signedIn.body.data.account.id).toBe(existingId);
   });
 
   it('recognises a returning Google user even if their Google email changed', async () => {

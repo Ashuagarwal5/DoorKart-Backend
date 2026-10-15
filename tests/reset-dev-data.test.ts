@@ -2,7 +2,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { assertSafeToReset, resetOrderData } from '../scripts/reset-dev-data.js';
-import { app, getStock, orderPayload, prisma, resetDatabase, seedFixtures } from './helpers.js';
+import { app, createTestBuyer, getStock, orderPayload, prisma, resetDatabase, seedFixtures } from './helpers.js';
 
 describe('assertSafeToReset', () => {
   it('allows a database on this machine', () => {
@@ -42,8 +42,10 @@ describe('resetOrderData', () => {
 
   it('removes orders and releases reservations but keeps the catalogue', async () => {
     const fixtures = await seedFixtures();
+    const buyer = await createTestBuyer();
     await request(app)
       .post('/api/v1/orders')
+      .auth(buyer.token, { type: 'bearer' })
       .send(
         orderPayload({
           deliveryAreaId: fixtures.areas.standard.id,
@@ -68,6 +70,7 @@ describe('resetOrderData', () => {
     // Order numbers start again from the first of the day.
     const next = await request(app)
       .post('/api/v1/orders')
+      .auth(buyer.token, { type: 'bearer' })
       .send(
         orderPayload({
           deliveryAreaId: fixtures.areas.standard.id,

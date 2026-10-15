@@ -1,3 +1,4 @@
+import { offerInclude, offerAvailability, offerDetails } from './product-offers.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { notFound } from '../../lib/errors.js';
 import { prisma } from '../../lib/prisma.js';
@@ -5,6 +6,7 @@ import type { ListProductsQuery } from './catalog.schemas.js';
 
 /** Only what customers may see: nothing inactive, and no internal stock bookkeeping. */
 const publicProductInclude = {
+  ...offerInclude,
   category: { select: { id: true, name: true, slug: true } },
   images: { orderBy: { displayOrder: 'asc' }, select: { url: true, altText: true, mediaType: true } },
 } satisfies Prisma.ProductInclude;
@@ -13,9 +15,10 @@ type ProductWithRelations = Prisma.ProductGetPayload<{ include: typeof publicPro
 
 function toPublicProduct(product: ProductWithRelations) {
   // Never negative: the database CHECK constraint keeps reservedQuantity <= stockQuantity.
-  const availableQuantity = product.stockQuantity - product.reservedQuantity;
+  const availableQuantity = offerAvailability(product);
 
   return {
+    ...offerDetails(product, true),
     id: product.id,
     name: product.name,
     slug: product.slug,
@@ -73,7 +76,7 @@ export async function listProducts(query: ListProductsQuery) {
           },
         }),
     // Available = on hand minus reserved by open orders, compared column to column in the database.
-    ...(query.inStock ? { stockQuantity: { gt: prisma.product.fields.reservedQuantity } } : {}),
+
     ...(query.featured === undefined ? {} : { isFeatured: query.featured }),
     ...(query.new === undefined ? {} : { isNew: query.new }),
     ...(query.search
@@ -86,6 +89,17 @@ export async function listProducts(query: ListProductsQuery) {
       : {}),
   };
 
+  if (query.inStock) {
+    const rows = await prisma.$queryRaw<{id:string}[]>`
+      SELECT p."id" FROM "Product" p WHERE
+      (p."kind" = 'STANDARD' AND p."stockQuantity" > p."reservedQuantity") OR
+      (p."kind" = 'COMBO' AND (SELECT count(*) FROM "ComboComponent" c WHERE c."comboId" = p."id") >= 2
+       AND NOT EXISTS (SELECT 1 FROM "ComboComponent" c JOIN "Product" b ON b."id" = c."productId" JOIN "Category" cat ON cat."id" = b."categoryId"
+         WHERE c."comboId" = p."id" AND (b."kind" <> 'STANDARD' OR NOT b."isActive" OR NOT cat."isActive" OR b."stockQuantity" - b."reservedQuantity" < c."quantity")))
+    `;
+    const availableIds = rows.map(r => r.id);
+    where.id = {in: availableIds.filter(id => !query.ids || query.ids.includes(id))};
+  }
   const [total, products] = await Promise.all([
     prisma.product.count({ where }),
     prisma.product.findMany({

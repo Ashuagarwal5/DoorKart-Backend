@@ -26,6 +26,7 @@ export type SettingView = {
 
 export type SettingsView = {
   secretsKeyConfigured: boolean;
+  smtpConfigured: boolean;
   groups: { id: SettingGroup; title: string; description: string; settings: SettingView[] }[];
 };
 
@@ -38,9 +39,11 @@ async function loadAll(): Promise<Map<string, Stored>> {
 
 export async function getSettingsView(secretsKeyConfigured: boolean): Promise<SettingsView> {
   const stored = await loadAll();
+  const reader = settingsFrom(stored);
 
   return {
     secretsKeyConfigured,
+    smtpConfigured: secretsKeyConfigured && smtpConfig(reader) !== null,
     groups: SETTING_GROUPS.map((group) => ({
       ...group,
       settings: SETTING_DEFINITIONS.filter((definition) => definition.group === group.id).map((definition) => {
@@ -159,6 +162,10 @@ export type SettingsReader = {
 /** One database read, then plain lookups: stored value, else the registry default, else "". */
 export async function readSettings(): Promise<SettingsReader> {
   const stored = await loadAll();
+  return settingsFrom(stored);
+}
+
+function settingsFrom(stored: Map<string, Stored>): SettingsReader {
   return {
     text: (key) => stored.get(key)?.value ?? getDefinition(key)?.defaultValue ?? '',
     secret: (key) => {
@@ -236,6 +243,18 @@ export function shopInfo(settings: SettingsReader): ShopInfo {
 
 export function otpExpiryMinutes(settings: SettingsReader): number {
   return Number(settings.text('auth.otpExpiryMinutes')) || 10;
+}
+
+export function otpResendCooldownSeconds(settings: SettingsReader): number {
+  return Number(settings.text('auth.otpResendCooldownSeconds')) || 60;
+}
+
+export function otpMaxAttempts(settings: SettingsReader): number {
+  return Number(settings.text('auth.otpMaxAttempts')) || 5;
+}
+
+export function registrationVerificationRequired(settings: SettingsReader): boolean {
+  return settings.text('auth.registrationOtpEnabled') !== 'false' || settings.text('auth.requireEmailVerification') !== 'false';
 }
 
 export function emailSignInEnabled(settings: SettingsReader): boolean {

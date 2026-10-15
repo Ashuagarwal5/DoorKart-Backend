@@ -27,11 +27,13 @@ export function createRequestFingerprint(input: CreateOrderInput): string {
   // Arrays in a fixed order, not objects: no key-order ambiguity, and JSON escaping keeps
   // the fields from running into each other.
   const canonical = JSON.stringify([
-    FINGERPRINT_VERSION,
+    input.items.some(item => item.variantId) ? 'v2-packs' : FINGERPRINT_VERSION,
     [customer.fullName, customer.mobile],
     [address.addressLine1, address.addressLine2, address.landmark, address.city, address.pincode],
     input.deliveryAreaId,
-    input.items.map((item): [string, number] => [item.productId, item.quantity]).sort(byProductId),
+    input.items.some(item => item.variantId)
+      ? input.items.map(item => [item.productId, item.variantId ?? null, item.quantity]).sort((a,b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+      : input.items.map((item): [string, number] => [item.productId, item.quantity]).sort(byProductId),
     input.paymentMethod,
   ]);
 

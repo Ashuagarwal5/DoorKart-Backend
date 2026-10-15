@@ -1,3 +1,4 @@
+import { physicalLines } from '../catalog/product-offers.js';
 /**
  * The rules for moving an order through its life, and the stock movements that go with
  * it. Customer cancellation and every admin action use these same functions, so there is
@@ -87,11 +88,11 @@ export async function claimStatusChange(
   }
 }
 
-type OrderLine = { productId: string; quantity: number };
+type OrderLine = { productId: string; quantity: number; components?: { productId: string; unitsPerPack: number }[] };
 
 /** Lines in a fixed order, so concurrent operations on shared products cannot deadlock. */
 function inLockOrder(items: OrderLine[]): OrderLine[] {
-  return [...items].sort((a, b) => a.productId.localeCompare(b.productId));
+  return physicalLines(items);
 }
 
 /**

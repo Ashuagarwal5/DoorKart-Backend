@@ -6,6 +6,7 @@ import {
   advance,
   app,
   createTestAdmin,
+  createTestBuyer,
   type Fixtures,
   getStock,
   placeTestOrder,
@@ -18,6 +19,7 @@ import {
 let fixtures: Fixtures;
 let admin: AdminAgent;
 let adminId: string;
+let buyerToken: string;
 
 const PRODUCTS = '/api/v1/admin/products';
 const CATEGORIES = '/api/v1/admin/categories';
@@ -26,6 +28,7 @@ const AREAS = '/api/v1/admin/delivery-areas';
 beforeEach(async () => {
   await resetDatabase();
   fixtures = await seedFixtures();
+  buyerToken = (await createTestBuyer()).token;
   adminId = (await createTestAdmin()).id;
   admin = await signIn();
 });
@@ -189,7 +192,7 @@ describe('admin products', () => {
     expect(response.body.data.isActive).toBe(false);
     // Gone from the shop...
     expect((await request(app).get('/api/v1/products/classmate-notebook')).status).toBe(404);
-    const buy = await request(app).post('/api/v1/orders').send({
+    const buy = await request(app).post('/api/v1/orders').auth(buyerToken, { type: 'bearer' }).send({
       clientRequestId: 'inactive-product-0001',
       customer: { fullName: 'Ravi Kumar', mobile: '9876543210' },
       address: { addressLine1: '1 Road', city: 'Testpur', pincode: '226001' },
@@ -319,7 +322,7 @@ describe('inventory adjustments', () => {
     const results = await Promise.all([
       adjust(id, -6),
       ...Array.from({ length: 8 }, (_, index) =>
-        request(app).post('/api/v1/orders').send({
+        request(app).post('/api/v1/orders').auth(buyerToken, { type: 'bearer' }).send({
           clientRequestId: `race-order-${index}-0001`,
           customer: { fullName: 'Racer', mobile: `98765432${10 + index}` },
           address: { addressLine1: '1 Road', city: 'Testpur', pincode: '226001' },
@@ -482,7 +485,7 @@ describe('admin delivery areas', () => {
 
     const publicAreas = (await request(app).get('/api/v1/delivery-areas')).body.data.map((area: { id: string }) => area.id);
     expect(publicAreas).not.toContain(id);
-    const buy = await request(app).post('/api/v1/orders').send({
+    const buy = await request(app).post('/api/v1/orders').auth(buyerToken, { type: 'bearer' }).send({
       clientRequestId: 'inactive-area-0001',
       customer: { fullName: 'Ravi Kumar', mobile: '9876543210' },
       address: { addressLine1: '1 Road', city: 'Testpur', pincode: '226001' },

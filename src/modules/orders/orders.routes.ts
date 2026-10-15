@@ -2,6 +2,7 @@ import { type Request, Router } from 'express';
 
 import { AppError } from '../../lib/errors.js';
 import { sendSuccess } from '../../lib/http.js';
+import { getAccount, requireAccount } from '../../middleware/account-auth.js';
 import {
   createOrderBodySchema,
   orderNumberParamsSchema,
@@ -24,9 +25,10 @@ function readTrackingToken(req: Request): string {
   return token.data;
 }
 
-ordersRouter.post('/orders', async (req, res) => {
+ordersRouter.post('/orders', requireAccount, async (req, res) => {
   const input = createOrderBodySchema.parse(req.body);
-  const { order, created } = await createOrder(input);
+  const accountId = getAccount(res).id;
+  const { order, created } = await createOrder(input, accountId);
 
   // A replayed clientRequestId answers 200 with the original order instead of 201.
   if (!created) {

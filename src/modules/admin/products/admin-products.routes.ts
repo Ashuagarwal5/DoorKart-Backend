@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import { createPackBody, updatePackBody, createPack, updatePack } from './product-packs.js';
 import { Router } from 'express';
 
 import { sendSuccess } from '../../../lib/http.js';
@@ -42,4 +44,13 @@ adminProductsRouter.post('/:id/inventory-adjustment', async (req, res) => {
   const { id } = idParamsSchema.parse(req.params);
   const body = inventoryAdjustmentBodySchema.parse(req.body);
   sendSuccess(res, await adjustInventory(id, body, getAdmin(res)));
+});
+
+adminProductsRouter.post('/:id/packs', async (req,res) => {
+  const {id}=idParamsSchema.parse(req.params);
+  sendSuccess(res,await createPack(id,createPackBody.parse(req.body)),201);
+});
+adminProductsRouter.patch('/:id/packs/:packId', async (req,res) => {
+  const {id,packId}=z.object({id:z.string().min(1).max(100),packId:z.string().min(1).max(100)}).parse(req.params);
+  sendSuccess(res,await updatePack(id,packId,updatePackBody.parse(req.body)));
 });

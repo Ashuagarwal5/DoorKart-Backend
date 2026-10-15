@@ -4,7 +4,7 @@
  * this list can be stored.
  */
 
-export type SettingGroup = 'shop' | 'email' | 'google' | 'signin';
+export type SettingGroup = 'shop' | 'email' | 'google' | 'signin' | 'reviews';
 export type SettingType = 'text' | 'email' | 'number' | 'boolean' | 'password';
 
 export type SettingDefinition = {
@@ -23,6 +23,7 @@ export type SettingDefinition = {
 };
 
 export const SETTING_GROUPS: { id: SettingGroup; title: string; description: string }[] = [
+  { id: 'reviews', title: 'Review Settings', description: 'Delivered account purchases establish verification. Guest reviews are disabled. Published shop-entered/imported reviews remain clearly labeled. One review per account and product, including deleted reviews.' },
   {
     id: 'shop',
     title: 'Shop details',
@@ -30,8 +31,8 @@ export const SETTING_GROUPS: { id: SettingGroup; title: string; description: str
   },
   {
     id: 'signin',
-    title: 'Customer sign-in',
-    description: 'Which ways customers can sign in to the app.',
+    title: 'Authentication Settings',
+    description: 'Registration verification and customer sign-in. Email login always requires a one-time code, even when registration verification is disabled.',
   },
   {
     id: 'email',
@@ -48,6 +49,14 @@ export const SETTING_GROUPS: { id: SettingGroup; title: string; description: str
 ];
 
 export const SETTING_DEFINITIONS: SettingDefinition[] = [
+  { key: 'reviews.enabled', group: 'reviews', label: 'Enable product reviews', type: 'boolean', defaultValue: 'true' },
+  { key: 'reviews.verifiedOnly', group: 'reviews', label: 'Allow customer reviews from verified purchasers only', type: 'boolean', defaultValue: 'true', description: 'A delivered account-linked purchase is required for customer submission and editing. Existing unverified customer reviews are excluded from public ratings while enabled.' },
+  { key: 'reviews.requireApproval', group: 'reviews', label: 'Require admin approval', type: 'boolean', defaultValue: 'true' },
+  { key: 'reviews.allowEditing', group: 'reviews', label: 'Allow review editing', type: 'boolean', defaultValue: 'true' },
+  { key: 'reviews.requireCollectedPayment', group: 'reviews', label: 'Require collected COD payment for purchase eligibility', type: 'boolean', defaultValue: 'false', description: 'Delivery is always required. This optionally also requires cash collection.' },
+  { key: 'reviews.purchaseWindowDays', group: 'reviews', label: 'Review eligibility window after delivery (days)', type: 'number', defaultValue: '0', min: 0, max: 3650, description: '0 means no purchase-age limit. Applies to submission and editing, not historical verification badges.' },
+  { key: 'reviews.editWindowDays', group: 'reviews', label: 'Customer editing/deletion window (days)', type: 'number', defaultValue: '30', min: 0, max: 3650, description: '0 means no time limit. Deleted reviews cannot be resubmitted for the same account/product.' },
+  { key: 'reviews.maxContentLength', group: 'reviews', label: 'Maximum review content length', type: 'number', defaultValue: '2000', min: 50, max: 10000 },
   {
     key: 'shop.phone',
     group: 'shop',
@@ -115,6 +124,40 @@ export const SETTING_DEFINITIONS: SettingDefinition[] = [
     description: 'Needs at least the Web client ID below.',
     type: 'boolean',
     defaultValue: 'false',
+  },
+  {
+    key: 'auth.registrationOtpEnabled',
+    group: 'signin',
+    label: 'Enable email OTP verification for registration',
+    description: 'Verify the email before completing registration. Disabling this never disables codes at login.',
+    type: 'boolean',
+    defaultValue: 'true',
+  },
+  {
+    key: 'auth.requireEmailVerification',
+    group: 'signin',
+    label: 'Require email verification',
+    description: 'When enabled, registration must verify the email even if the registration OTP option is off. When both are off, registration creates an unverified account without signing it in.',
+    type: 'boolean',
+    defaultValue: 'true',
+  },
+  {
+    key: 'auth.otpResendCooldownSeconds',
+    group: 'signin',
+    label: 'OTP resend cooldown (seconds)',
+    type: 'number',
+    defaultValue: '60',
+    min: 30,
+    max: 600,
+  },
+  {
+    key: 'auth.otpMaxAttempts',
+    group: 'signin',
+    label: 'Maximum OTP verification attempts',
+    type: 'number',
+    defaultValue: '5',
+    min: 1,
+    max: 10,
   },
   {
     key: 'auth.otpExpiryMinutes',

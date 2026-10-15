@@ -220,7 +220,7 @@ describe('GET /api/v1/delivery-areas', () => {
       {
         id: fixtures.areas.withMinimum.id,
         name: 'Model Town',
-        pincode: null,
+        pincode: fixtures.areas.withMinimum.pincode,
         deliveryChargePaise: 4000,
         minimumOrderPaise: 20000,
         freeDeliveryThresholdPaise: null,
@@ -228,7 +228,7 @@ describe('GET /api/v1/delivery-areas', () => {
       {
         id: fixtures.areas.standard.id,
         name: 'Station Road',
-        pincode: null,
+        pincode: fixtures.areas.standard.pincode,
         deliveryChargePaise: 3000,
         minimumOrderPaise: null,
         freeDeliveryThresholdPaise: 50000,

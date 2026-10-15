@@ -54,14 +54,15 @@ export const createOrderBodySchema = z.strictObject({
     .array(
       z.strictObject({
         productId: z.string().trim().min(1).max(100),
+        variantId: z.string().trim().min(1).max(100).optional(),
         quantity: z.number().int().min(1).max(MAX_QUANTITY_PER_LINE),
       })
     )
     .min(1, 'The cart is empty')
     .max(MAX_LINES_PER_ORDER)
     .refine(
-      (items) => new Set(items.map((item) => item.productId)).size === items.length,
-      'Each product may appear only once'
+      (items) => new Set(items.map((item) => JSON.stringify([item.productId, item.variantId ?? null]))).size === items.length,
+      'Each product pack may appear only once'
     ),
   paymentMethod: z.enum(['COD']),
 });

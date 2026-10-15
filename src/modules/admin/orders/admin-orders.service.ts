@@ -4,6 +4,7 @@ import { phoneSearchDigits } from '../../../lib/mobile.js';
 import { pageArgs, pageResult } from '../../../lib/pagination.js';
 import { prisma } from '../../../lib/prisma.js';
 import { shopDateRange } from '../../../lib/time.js';
+import { emitOrderStatusEvent, emitPaymentCollected } from '../../notifications/emitters.js';
 import type { AdminContext } from '../auth/session.js';
 import {
   addStatusHistory,
@@ -47,7 +48,7 @@ function toListItem(order: ListedOrder) {
 }
 
 const detailInclude = {
-  items: { orderBy: { productName: 'asc' } },
+  items: { include: { components: true }, orderBy: { productName: 'asc' } },
   statusHistory: {
     orderBy: { createdAt: 'asc' },
     include: { adminUser: { select: { id: true, name: true } } },
@@ -77,6 +78,7 @@ function toDetail(order: DetailedOrder) {
     },
     deliveryAreaId: order.deliveryAreaId,
     items: order.items.map((item) => ({
+      id: item.id, variantId: item.variantId, packLabel: item.packLabel, components: item.components,
       productId: item.productId,
       productName: item.productName,
       sku: item.sku,
@@ -183,7 +185,7 @@ function rejectStatusChange(to: OrderStatus, current: Rejection) {
     // Reaching here means the move was only blocked by cash already taken.
     return conflict(
       'INVALID_ORDER_TRANSITION',
-      'Cash has already been collected for this order, and refunds are not supported yet.',
+      'Cash has already been collected. Refund cases are available only after delivery; this order cannot be cancelled or marked delivery failed.',
       { from: current.orderStatus, to }
     );
   }
@@ -215,7 +217,7 @@ export async function changeOrderStatus(
       to,
       extras:
         to === 'CANCELLED' ? { cancelledAt: now } : to === 'DELIVERED' ? { deliveredAt: now } : {},
-      // Giving up on an order whose cash was taken would need a refund, which is not built.
+      // Delivered-order refund cases do not authorize cancellation/failure of collected orders.
       requirePaymentPending: to === 'CANCELLED' || to === 'DELIVERY_FAILED',
       reject: (current) => rejectStatusChange(to, current),
     });
@@ -224,7 +226,7 @@ export async function changeOrderStatus(
       // Read after the claim: from here this transaction owns the order's status.
       const items = await tx.orderItem.findMany({
         where: { orderId: id },
-        select: { productId: true, quantity: true },
+        select: { productId: true, quantity: true, components: { select: { productId: true, unitsPerPack: true } } },
       });
       if (to === 'CANCELLED') {
         await releaseReservations(tx, id, items, admin.id);
@@ -233,7 +235,8 @@ export async function changeOrderStatus(
       }
     }
 
-    await addStatusHistory(tx, id, to, note, admin.id);
+    const history = await addStatusHistory(tx, id, to, note, admin.id);
+    await emitOrderStatusEvent(tx, id, to, history.id);
   });
 
   return getOrderDetail(id);
@@ -290,7 +293,7 @@ export async function recordPayment(
       );
     }
 
-    await tx.paymentStatusHistory.create({
+    const paymentHistory = await tx.paymentStatusHistory.create({
       data: {
         orderId: id,
         fromStatus: 'PENDING',
@@ -299,6 +302,7 @@ export async function recordPayment(
         adminUserId: admin.id,
       },
     });
+    await emitPaymentCollected(tx, id, paymentHistory.id);
   });
 
   return getOrderDetail(id);

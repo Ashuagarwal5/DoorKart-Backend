@@ -1,3 +1,4 @@
+import { comboComponentsSchema } from './product-packs.js';
 import { z } from 'zod';
 
 import { booleanFlag, paginationQuery, searchText } from '../../../lib/pagination.js';
@@ -63,6 +64,8 @@ const sellingPriceWithinMrp = {
 
 export const createProductBodySchema = z
   .strictObject({
+    kind: z.enum(['STANDARD','COMBO']).default('STANDARD'),
+    comboComponents: comboComponentsSchema.optional(),
     name: productFields.name,
     // Left out, it is derived from the name.
     slug: productFields.slug.optional(),
@@ -79,7 +82,8 @@ export const createProductBodySchema = z
     isActive: productFields.isActive.default(true),
     images: productFields.images.default([]),
   })
-  .refine((body) => body.sellingPricePaise <= body.mrpPaise, sellingPriceWithinMrp);
+  .refine((body) => body.sellingPricePaise <= body.mrpPaise, sellingPriceWithinMrp)
+  .refine(body => body.kind === 'COMBO' ? Boolean(body.comboComponents) && body.stockQuantity === 0 : body.comboComponents === undefined, {path:['comboComponents'],message:'Combos require contents and zero opening stock. Ordinary products cannot have combo contents.'});
 
 /**
  * Stock is deliberately absent: `stockQuantity` and `reservedQuantity` cannot be edited
@@ -87,6 +91,7 @@ export const createProductBodySchema = z
  */
 export const updateProductBodySchema = z
   .strictObject({
+    comboComponents: comboComponentsSchema.optional(),
     name: productFields.name,
     slug: productFields.slug,
     description: productFields.description,
@@ -110,13 +115,14 @@ export const updateProductBodySchema = z
     sellingPriceWithinMrp
   );
 
-export type CreateProductBody = z.infer<typeof createProductBodySchema>;
+export type CreateProductBody = Omit<z.infer<typeof createProductBodySchema>, 'kind'> & { kind?: 'STANDARD' | 'COMBO' };
 export type UpdateProductBody = z.infer<typeof updateProductBodySchema>;
 
 export const listProductsQuerySchema = z.object({
   ...paginationQuery,
   /** Name or SKU. */
   search: searchText,
+  kind: z.enum(['STANDARD','COMBO']).optional(),
   categoryId: z.string().trim().min(1).max(100).optional(),
   isActive: booleanFlag.optional(),
   /** Only products whose available stock has reached their low-stock threshold. */

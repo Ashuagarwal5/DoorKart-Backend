@@ -10,6 +10,9 @@ import { adminOrdersRouter } from './orders/admin-orders.routes.js';
 import { adminProductsRouter } from './products/admin-products.routes.js';
 import { adminSettingsRouter } from './settings/admin-settings.routes.js';
 import { adminUploadsRouter } from './uploads/admin-uploads.routes.js';
+import { adminReviewsRouter } from '../reviews/reviews.routes.js';
+import { adminReturnsRouter } from './returns/returns.routes.js';
+import { adminNotificationsRouter } from './notifications/admin-notifications.routes.js';
 
 /**
  * Everything under /api/v1/admin. The order of the lines is the security model:
@@ -33,6 +36,9 @@ export function createAdminRouter(loginRateLimit: LoginRateLimit) {
   router.use('/customers', adminCustomersRouter);
   router.use('/uploads', adminUploadsRouter);
   router.use('/settings', adminSettingsRouter);
+  router.use('/reviews', adminReviewsRouter);
+  router.use('/returns', adminReturnsRouter);
+  router.use('/notifications', adminNotificationsRouter);
 
   return router;
 }

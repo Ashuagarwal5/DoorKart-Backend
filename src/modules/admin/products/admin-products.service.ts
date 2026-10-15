@@ -1,3 +1,5 @@
+import { offerInclude, offerAvailability, offerDetails } from '../../catalog/product-offers.js';
+import { validateComponents } from './product-packs.js';
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { AppError, conflict, notFound } from '../../../lib/errors.js';
 import { pageArgs, pageResult } from '../../../lib/pagination.js';
@@ -15,6 +17,7 @@ import type {
 } from './admin-products.schemas.js';
 
 const productInclude = {
+  ...offerInclude,
   category: { select: { id: true, name: true, slug: true } },
   images: { orderBy: { displayOrder: 'asc' } },
 } satisfies Prisma.ProductInclude;
@@ -26,8 +29,9 @@ type ProductWithRelations = Prisma.ProductGetPayload<{ include: typeof productIn
  * orders that have not been delivered or cancelled yet.
  */
 function toAdminProduct(product: ProductWithRelations) {
-  const availableQuantity = product.stockQuantity - product.reservedQuantity;
+  const availableQuantity = offerAvailability(product);
   return {
+    ...offerDetails(product),
     id: product.id,
     name: product.name,
     slug: product.slug,
@@ -41,7 +45,7 @@ function toAdminProduct(product: ProductWithRelations) {
     reservedQuantity: product.reservedQuantity,
     availableQuantity,
     lowStockThreshold: product.lowStockThreshold,
-    isLowStock: availableQuantity <= product.lowStockThreshold,
+    isLowStock: product.kind === 'STANDARD' && availableQuantity <= product.lowStockThreshold,
     isActive: product.isActive,
     isFeatured: product.isFeatured,
     isNew: product.isNew,
@@ -131,6 +135,7 @@ function imageRows(images: CreateProductBody['images']) {
 
 export async function listProducts(query: ListProductsQuery) {
   const where: Prisma.ProductWhereInput = {
+    ...(query.kind ? { kind: query.kind } : {}),
     ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
     ...(query.search
@@ -148,7 +153,7 @@ export async function listProducts(query: ListProductsQuery) {
   if (query.lowStock !== undefined) {
     const rows = await prisma.$queryRaw<{ id: string }[]>`
       SELECT "id" FROM "Product"
-      WHERE ("stockQuantity" - "reservedQuantity") <= "lowStockThreshold"
+      WHERE "kind" = 'STANDARD' AND ("stockQuantity" - "reservedQuantity") <= "lowStockThreshold"
     `;
     const ids = rows.map((row) => row.id);
     where.id = query.lowStock ? { in: ids } : { notIn: ids };
@@ -181,8 +186,12 @@ export async function createProduct(body: CreateProductBody, admin: AdminContext
   await assertUploadedFilesExist(body.images);
 
   try {
-    const created = await prisma.product.create({
+    const created = await prisma.$transaction(async tx => {
+      if (body.comboComponents) await validateComponents(tx, body.comboComponents);
+      return tx.product.create({
       data: {
+        kind: body.kind ?? 'STANDARD',
+        ...(body.comboComponents ? { comboComponents: { create: body.comboComponents } } : {}),
         name: body.name,
         slug,
         description: body.description,
@@ -211,6 +220,7 @@ export async function createProduct(body: CreateProductBody, admin: AdminContext
           : {}),
       },
       include: productInclude,
+    });
     });
     return toAdminProduct(created);
   } catch (error) {
@@ -248,10 +258,22 @@ export async function updateProduct(id: string, body: UpdateProductBody) {
     id
   );
 
-  const { images, ...fields } = body;
+  const { images, comboComponents, ...fields } = body;
+  if (comboComponents && existing.kind !== 'COMBO') throw conflict('INVALID_COMBO','Only combos may have contents.');
 
   try {
     await prisma.$transaction(async (tx) => {
+      // Lock all affected products in the same order as checkout.
+      const lockIds = [...new Set([id, ...(comboComponents?.map(c => c.productId) ?? [])])].sort();
+      for (const lockId of lockIds) await tx.$queryRaw`SELECT "id" FROM "Product" WHERE "id" = ${lockId} FOR UPDATE`;
+      if (comboComponents) {
+        await validateComponents(tx, comboComponents, id);
+        await tx.comboComponent.deleteMany({where:{comboId:id}});
+        await tx.comboComponent.createMany({data:comboComponents.map(c => ({...c,comboId:id}))});
+      }
+      // Recheck partial price updates after locking, including concurrent edits.
+      const current = await tx.product.findUniqueOrThrow({where:{id}});
+      if ((fields.sellingPricePaise ?? current.sellingPricePaise) > (fields.mrpPaise ?? current.mrpPaise)) throw conflict('INVALID_PRICE','Selling price cannot exceed MRP.');
       await tx.product.update({ where: { id }, data: fields });
       if (images !== undefined) {
         await tx.productImage.deleteMany({ where: { productId: id } });
@@ -283,17 +305,19 @@ export async function adjustInventory(
       UPDATE "Product"
       SET "stockQuantity" = "stockQuantity" + ${body.quantityDelta}::int, "updatedAt" = NOW()
       WHERE "id" = ${id}
+        AND "kind" = 'STANDARD'
         AND "stockQuantity" + ${body.quantityDelta}::int >= "reservedQuantity"
     `;
 
     if (updatedRows !== 1) {
       const product = await tx.product.findUnique({
         where: { id },
-        select: { stockQuantity: true, reservedQuantity: true },
+        select: { stockQuantity: true, reservedQuantity: true, kind: true },
       });
       if (!product) {
         throw notFound('PRODUCT_NOT_FOUND', 'This product does not exist.');
       }
+      if (product.kind === 'COMBO') throw conflict('COMBO_STOCK_MANAGED','Combo stock comes from its component products. Adjust those products instead.');
       const available = product.stockQuantity - product.reservedQuantity;
       throw conflict(
         'ADJUSTMENT_BELOW_RESERVED',

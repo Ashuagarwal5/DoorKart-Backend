@@ -11,6 +11,7 @@ import { accountRouter, authRouter } from './modules/accounts/accounts.routes.js
 import { catalogRouter } from './modules/catalog/catalog.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { ordersRouter } from './modules/orders/orders.routes.js';
+import { publicReviewsRouter } from './modules/reviews/reviews.routes.js';
 import { TRACKING_TOKEN_HEADER } from './modules/orders/orders.schemas.js';
 
 const API_PREFIX = '/api/v1';
@@ -59,6 +60,7 @@ export function createApp(options: AppOptions = {}): Express {
 
   app.use(healthRouter);
   app.use(API_PREFIX, catalogRouter);
+  app.use(API_PREFIX, publicReviewsRouter);
   app.use(API_PREFIX, ordersRouter);
   app.use(`${API_PREFIX}/auth`, authRouter);
   app.use(`${API_PREFIX}/account`, accountRouter);
